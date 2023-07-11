@@ -22,7 +22,7 @@ func ToBase62(num int) string {
 		res = string(base[int(r)]) + res
 	}
 
-	return string(res)
+	return res
 }
 
 // ToBase10 Function decodes a given base62 string to database ID

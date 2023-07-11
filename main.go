@@ -4,9 +4,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"github.com/gorilla/mux"
+	_ "github.com/lib/pq"
+	"github.com/muchiri08/urlshortener/models"
 	base62 "github.com/muchiri08/urlshortener/utils"
-	"io/ioutil"
+	"io"
+	"log"
 	"net/http"
+	"time"
 )
 
 // DBClient stores the database session information. Needs to be initialized once
@@ -26,9 +30,11 @@ func (driver *DBClient) GetOriginalURL(w http.ResponseWriter, r *http.Request) {
 
 	//Get ID from base62 url
 	id := base62.ToBase10(vars["encoded_string"])
+	log.Println("Id: ", id)
 	err := driver.db.QueryRow("SELECT url FROM web_url WHERE id = $1", id).Scan(&url)
 	//Handles response details
 	if err != nil {
+		log.Println("Error occurred")
 		w.Write([]byte(err.Error()))
 	} else {
 		w.WriteHeader(http.StatusOK)
@@ -36,6 +42,7 @@ func (driver *DBClient) GetOriginalURL(w http.ResponseWriter, r *http.Request) {
 		responseMap := map[string]interface{}{"url": url}
 		response, _ := json.Marshal(responseMap)
 		w.Write(response)
+		w.Write([]byte("\n"))
 	}
 }
 
@@ -43,19 +50,42 @@ func (driver *DBClient) GetOriginalURL(w http.ResponseWriter, r *http.Request) {
 func (driver *DBClient) GenerateShortURL(w http.ResponseWriter, r *http.Request) {
 	var id int
 	var record Record
-	postBody, _ := ioutil.ReadAll(r.Body)
+	postBody, _ := io.ReadAll(r.Body)
 	json.Unmarshal(postBody, &record)
 	err := driver.db.QueryRow("INSERT INTO web_url(url) VALUES($1) RETURNING id", record.URL).Scan(&id)
 	responseMap := map[string]interface{}{"encoded_string": base62.ToBase62(id)}
 	if err != nil {
+		log.Println("Error occurred")
 		w.Write([]byte(err.Error()))
 	} else {
 		w.Header().Set("Content-Type", "application/json")
 		response, _ := json.Marshal(responseMap)
 		w.Write(response)
+		w.Write([]byte("\n"))
 	}
 }
 
 func main() {
+	db, err := models.InitDB()
+	if err != nil {
+		panic(err)
+	}
+	dbClient := &DBClient{
+		db: db,
+	}
+	defer db.Close()
 
+	//create a new router
+	r := mux.NewRouter()
+	//Attach an elegant path with handler
+	r.HandleFunc("/v1/short/{encoded_string:[a-zA-Z0-9]*}", dbClient.GetOriginalURL).Methods("GET")
+	r.HandleFunc("/v1/short", dbClient.GenerateShortURL).Methods("POST")
+	server := &http.Server{
+		Handler: r,
+		Addr:    "127.0.0.1:8000",
+		// Good practice: enforce timeouts for servers you create!
+		WriteTimeout: 15 * time.Second,
+		ReadTimeout:  15 * time.Second,
+	}
+	log.Fatal(server.ListenAndServe())
 }
